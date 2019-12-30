@@ -198,6 +198,7 @@ func (m *Messenger) addFileList(folder string, FileList []string) error {
 }
 
 func (m *Messenger) putFileSize(file string, size int64) error {
+	file = filepath.Clean(file)
 	return m.keeper.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(BUCKET)
 		bytes := make([]byte, 8)
