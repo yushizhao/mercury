@@ -156,7 +156,7 @@ func (m *Messenger) processCreate(name string) ([]byte, error) {
 	}
 
 	err = m.putFileSize(name, 0)
-	return []byte(name + "created."), err
+	return []byte(name + " created."), err
 }
 
 func (m *Messenger) processWrite(name string) ([]byte, error) {
