@@ -152,18 +152,31 @@ func (m *Messenger) processWrite(name string) ([]byte, error) {
 	}
 	defer file.Close()
 
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	newSize := fileInfo.Size()
+	// edge case when save trigger two writes
+	if newSize == 0 {
+		return nil, nil
+	}
+
+	bufferSize := newSize - size
+	// If file is not just appended
+	if bufferSize < 0 {
+		// reset keeper
+		err = m.putFileSize(name, newSize)
+		return []byte("File size decreased."), err
+	}
+
 	_, err = file.Seek(size, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	newSize := fileInfo.Size()
-
-	msg := make([]byte, newSize-size)
+	msg := make([]byte, bufferSize)
 	_, err = file.Read(msg)
 	if err != nil {
 		return nil, err
