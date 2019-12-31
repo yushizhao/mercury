@@ -213,10 +213,13 @@ func (m *Messenger) addFileList(folder string, FileList []string) error {
 	for _, f := range FileList {
 		f = filepath.Join(folder, f)
 		fInfo, err := os.Stat(f)
+		var fSize int64
 		if err != nil {
-			return err
+			fSize = 0
+		} else {
+			fSize = fInfo.Size()
 		}
-		err = m.putFileSize(f, fInfo.Size())
+		err = m.putFileSize(f, fSize)
 		if err != nil {
 			return err
 		}
