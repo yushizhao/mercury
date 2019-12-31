@@ -121,6 +121,15 @@ func (m *Messenger) writeMessages() {
 			if !ok {
 				return
 			}
+			if event.Op == fsnotify.Create {
+				msg, err := m.processCreate(event.Name)
+				if msg != nil {
+					m.Messages <- Message{Event: event, Msg: msg}
+				}
+				if err != nil {
+					m.Errors <- err
+				}
+			}
 			if event.Op == fsnotify.Write {
 				msg, err := m.processWrite(event.Name)
 				if msg != nil {
@@ -137,6 +146,17 @@ func (m *Messenger) writeMessages() {
 			m.Errors <- err
 		}
 	}
+}
+
+func (m *Messenger) processCreate(name string) ([]byte, error) {
+	_, err := m.getFileSize(name)
+	// ignore files not in keeper
+	if err != nil {
+		return nil, nil
+	}
+
+	err = m.putFileSize(name, 0)
+	return []byte(name + "created."), err
 }
 
 func (m *Messenger) processWrite(name string) ([]byte, error) {
