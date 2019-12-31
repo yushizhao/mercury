@@ -78,11 +78,9 @@ func NewMessenger() (*Messenger, error) {
 		return nil, err
 	}
 
-	for k, v := range conf.FolderMapFileList {
-		err := m.addFileList(k, v)
-		if err != nil {
-			return nil, err
-		}
+	err = m.resetKeeper(conf.FolderMapFileList)
+	if err != nil {
+		return nil, err
 	}
 
 	go m.writeMessages()
@@ -109,6 +107,70 @@ func (m *Messenger) Close() error {
 	err = m.keeper.Close()
 
 	return err
+}
+
+func (m *Messenger) resetKeeper(FolderMapFileList map[string][]string) error {
+	folders := []string{}
+	names := make(map[string]bool)
+
+	for k, v := range FolderMapFileList {
+		folders = append(folders, k)
+		for _, e := range v {
+			names[filepath.Join(k, e)] = false
+		}
+	}
+
+	// remove the unwanted in keeper
+	// mark the found in names
+	err := m.keeper.Update(func(tx *bolt.Tx) error {
+		// Assume bucket exists and has keys
+		b := tx.Bucket(BUCKET)
+
+		return b.ForEach(func(k, _ []byte) error {
+			_, ok := names[string(k)]
+			if ok {
+				// mark the found
+				names[string(k)] = true
+			} else {
+				err := b.Delete(k)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// add the not found to keeper
+	for k, v := range names {
+		if !v {
+			fInfo, err := os.Stat(k)
+			var fSize int64
+			if err != nil { // no such file yet
+				fSize = 0
+			} else {
+				fSize = fInfo.Size()
+			}
+			err = m.putFileSize(k, fSize)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// add folders to watcher
+	for _, folder := range folders {
+		err := m.watcher.Add(folder)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (m *Messenger) writeMessages() {
@@ -204,33 +266,6 @@ func (m *Messenger) processWrite(name string) ([]byte, error) {
 
 	err = m.putFileSize(name, newSize)
 	return msg, err
-}
-
-func (m *Messenger) addFileList(folder string, FileList []string) error {
-
-	folder = filepath.Clean(folder)
-	// store origin file size to keeper
-	for _, f := range FileList {
-		f = filepath.Join(folder, f)
-		fInfo, err := os.Stat(f)
-		var fSize int64
-		if err != nil {
-			fSize = 0
-		} else {
-			fSize = fInfo.Size()
-		}
-		err = m.putFileSize(f, fSize)
-		if err != nil {
-			return err
-		}
-	}
-	// add folder to watcher
-
-	err := m.watcher.Add(folder)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (m *Messenger) putFileSize(file string, size int64) error {
