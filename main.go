@@ -19,6 +19,7 @@ func main() {
 		"sasl.password":     "adminpassword",
 	})
 	topic := kafka.TopicPartition{Topic: &TOPIC, Partition: kafka.PartitionAny}
+	defer kafkaProducer.Close()
 
 	hermes, err := messenger.NewMessenger()
 	if err != nil {
