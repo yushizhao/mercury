@@ -33,9 +33,7 @@ func main() {
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					log.Printf("Delivery failed: %v\n", ev.TopicPartition)
-				} else {
-					log.Printf("Delivered message to %v\n", ev.TopicPartition)
+					log.Printf("Delivery failed: %s!!!\n%s: %s\n", ev.TopicPartition.Error.Error(), string(ev.Key), string(ev.Value))
 				}
 			default:
 				log.Println(ev.String())
