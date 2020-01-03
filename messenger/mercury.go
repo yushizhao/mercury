@@ -211,8 +211,10 @@ func (m *Messenger) writeMessages() {
 					if err != nil {
 						m.Errors <- err
 					}
+					m.keeperNote[k] = clean
+				} else {
+					m.keeperNote[k] = idle
 				}
-				m.keeperNote[k] = idle // may set to clean for dirty ones
 			}
 		case event, ok := <-m.watcher.Events:
 			if !ok {
@@ -275,7 +277,7 @@ func (m *Messenger) checkNote(name string) bool {
 		result = true
 	case clean:
 		m.keeperNote[name] = dirty
-		result = true
+		result = false
 	case dirty:
 		result = false
 	}
