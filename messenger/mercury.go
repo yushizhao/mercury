@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/fsnotify/fsnotify"
@@ -23,6 +24,7 @@ var (
 
 type config struct {
 	FolderMapFileList map[string][]string
+	Lag               int // seconds
 }
 
 type Message struct {
@@ -31,15 +33,28 @@ type Message struct {
 }
 
 type Messenger struct {
-	Messages chan Message
-	Errors   chan error
-	watcher  *fsnotify.Watcher
-	keeper   *bolt.DB
-	done     chan struct{} // Channel for sending a "quit message" to the reader goroutine
+	Messages     chan Message
+	Errors       chan error
+	watcher      *fsnotify.Watcher
+	keeper       *bolt.DB
+	keeperNote   map[string]bool
+	keeperTicker *time.Ticker
+	done         chan struct{} // Channel for sending a "quit message" to the reader goroutine
 	// doneResp chan struct{} // Channel to respond to Close
 }
 
 func NewMessenger() (*Messenger, error) {
+	// load config
+	conf := config{}
+	data, err := ioutil.ReadFile(CONFIG)
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal(data, &conf)
+	if err != nil {
+		return nil, err
+	}
+
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -58,26 +73,20 @@ func NewMessenger() (*Messenger, error) {
 		return nil
 	})
 
+	t := time.NewTicker(time.Duration(conf.Lag) * time.Second)
+
 	m := &Messenger{
-		Messages: make(chan Message),
-		Errors:   make(chan error),
-		watcher:  w,
-		keeper:   k,
-		done:     make(chan struct{}),
+		Messages:     make(chan Message),
+		Errors:       make(chan error),
+		watcher:      w,
+		keeper:       k,
+		keeperNote:   make(map[string]bool),
+		keeperTicker: t,
+		done:         make(chan struct{}),
 		// doneResp: make(chan struct{}),
 	}
 
-	// load config
-	conf := config{}
-	data, err := ioutil.ReadFile(CONFIG)
-	if err != nil {
-		return nil, err
-	}
-	err = json.Unmarshal(data, &conf)
-	if err != nil {
-		return nil, err
-	}
-
+	// actually set watcher as well
 	err = m.resetKeeper(conf.FolderMapFileList)
 	if err != nil {
 		return nil, err
@@ -105,6 +114,7 @@ func (m *Messenger) Close() error {
 
 	err := m.watcher.Close()
 	err = m.keeper.Close()
+	m.keeperTicker.Stop()
 
 	return err
 }
@@ -117,6 +127,8 @@ func (m *Messenger) resetKeeper(FolderMapFileList map[string][]string) error {
 		folders = append(folders, k)
 		for _, e := range v {
 			names[filepath.Join(k, e)] = false
+			// use a different copy
+			m.keeperNote[filepath.Join(k, e)] = false
 		}
 	}
 
@@ -179,6 +191,12 @@ func (m *Messenger) writeMessages() {
 	defer close(m.Messages)
 	for {
 		select {
+		case <-m.done:
+			return
+		case <-m.keeperTicker.C:
+			for k := range m.keeperNote {
+				m.keeperNote[k] = false
+			}
 		case event, ok := <-m.watcher.Events:
 			if !ok {
 				return
@@ -222,10 +240,24 @@ func (m *Messenger) processCreate(name string) ([]byte, error) {
 }
 
 func (m *Messenger) processWrite(name string) ([]byte, error) {
-	size, err := m.getFileSize(name)
-	// ignore files not in keeper
-	if err != nil {
+	// check keeper note
+	name = filepath.Clean(name)
+	val, ok := m.keeperNote[name]
+
+	if !ok {
+		// ignore files not in keeper note
 		return nil, nil
+	}
+	if val {
+		// avoid too frequent accesses
+		return nil, nil
+	}
+	m.keeperNote[name] = true
+
+	size, err := m.getFileSize(name)
+	if err != nil {
+		// keeper should keep every file within keeper note
+		return nil, fmt.Errorf("keeper missing %s", name)
 	}
 
 	file, err := os.Open(name)
