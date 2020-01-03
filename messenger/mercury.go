@@ -275,10 +275,9 @@ func (m *Messenger) processWrite(name string) ([]byte, error) {
 
 	bufferSize := newSize - size
 	// If file is not just appended
-	if bufferSize < 0 {
-		// reset keeper
-		err = m.putFileSize(name, newSize)
-		return []byte("File size decreased."), err
+	if bufferSize <= 0 {
+		// treat as error
+		return nil, fmt.Errorf("%s size not increase.", name)
 	}
 
 	_, err = file.Seek(size, 0)
