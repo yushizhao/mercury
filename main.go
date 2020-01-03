@@ -5,20 +5,16 @@ import (
 	"log"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/yushizhao/mercury/castle"
 	"github.com/yushizhao/mercury/messenger"
 )
 
-var TOPIC = "test"
-
 func main() {
-	kafkaProducer, err := kafka.NewProducer(&kafka.ConfigMap{
-		"bootstrap.servers": "127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095",
-		"security.protocol": "SASL_PLAINTEXT",
-		"sasl.mechanisms":   "PLAIN",
-		"sasl.username":     "admin",
-		"sasl.password":     "adminpassword",
-	})
-	topic := kafka.TopicPartition{Topic: &TOPIC, Partition: kafka.PartitionAny}
+
+	topic, kafkaProducer, err := castle.LoadKafkaJson()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer kafkaProducer.Close()
 
 	hermes, err := messenger.NewMessenger()
