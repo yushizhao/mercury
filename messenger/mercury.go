@@ -37,11 +37,19 @@ type Messenger struct {
 	Errors       chan error
 	watcher      *fsnotify.Watcher
 	keeper       *bolt.DB
-	keeperNote   map[string]bool
+	keeperNote   map[string]note
 	keeperTicker *time.Ticker
 	done         chan struct{} // Channel for sending a "quit message" to the reader goroutine
 	// doneResp chan struct{} // Channel to respond to Close
 }
+
+type note int
+
+const (
+	idle note = iota
+	clean
+	dirty
+)
 
 func NewMessenger() (*Messenger, error) {
 	// load config
@@ -80,7 +88,7 @@ func NewMessenger() (*Messenger, error) {
 		Errors:       make(chan error),
 		watcher:      w,
 		keeper:       k,
-		keeperNote:   make(map[string]bool),
+		keeperNote:   make(map[string]note),
 		keeperTicker: t,
 		done:         make(chan struct{}),
 		// doneResp: make(chan struct{}),
@@ -127,8 +135,7 @@ func (m *Messenger) resetKeeper(FolderMapFileList map[string][]string) error {
 		folders = append(folders, k)
 		for _, e := range v {
 			names[filepath.Join(k, e)] = false
-			// use a different copy
-			m.keeperNote[filepath.Join(k, e)] = false
+			m.keeperNote[filepath.Join(k, e)] = idle
 		}
 	}
 
@@ -194,8 +201,18 @@ func (m *Messenger) writeMessages() {
 		case <-m.done:
 			return
 		case <-m.keeperTicker.C:
-			for k := range m.keeperNote {
-				m.keeperNote[k] = false
+			for k, v := range m.keeperNote {
+				if v == dirty {
+					msg, err := m.processWrite(k)
+					if msg != nil {
+						makeup := fsnotify.Event{Op: fsnotify.Write, Name: k}
+						m.Messages <- Message{Event: makeup, Msg: msg}
+					}
+					if err != nil {
+						m.Errors <- err
+					}
+				}
+				m.keeperNote[k] = idle // may set to clean for dirty ones
 			}
 		case event, ok := <-m.watcher.Events:
 			if !ok {
@@ -211,12 +228,14 @@ func (m *Messenger) writeMessages() {
 				}
 			}
 			if event.Op == fsnotify.Write {
-				msg, err := m.processWrite(event.Name)
-				if msg != nil {
-					m.Messages <- Message{Event: event, Msg: msg}
-				}
-				if err != nil {
-					m.Errors <- err
+				if m.checkNote(event.Name) {
+					msg, err := m.processWrite(event.Name)
+					if msg != nil {
+						m.Messages <- Message{Event: event, Msg: msg}
+					}
+					if err != nil {
+						m.Errors <- err
+					}
 				}
 			}
 		case err, ok := <-m.watcher.Errors:
@@ -239,21 +258,32 @@ func (m *Messenger) processCreate(name string) ([]byte, error) {
 	return []byte(name + " created."), err
 }
 
-func (m *Messenger) processWrite(name string) ([]byte, error) {
+func (m *Messenger) checkNote(name string) bool {
 	// check keeper note
 	name = filepath.Clean(name)
 	val, ok := m.keeperNote[name]
 
 	if !ok {
 		// ignore files not in keeper note
-		return nil, nil
+		return false
 	}
-	if val {
-		// avoid too frequent accesses
-		return nil, nil
-	}
-	m.keeperNote[name] = true
 
+	var result bool
+	switch val {
+	case idle:
+		m.keeperNote[name] = clean
+		result = true
+	case clean:
+		m.keeperNote[name] = dirty
+		result = true
+	case dirty:
+		result = false
+	}
+
+	return result
+}
+
+func (m *Messenger) processWrite(name string) ([]byte, error) {
 	size, err := m.getFileSize(name)
 	if err != nil {
 		// keeper should keep every file within keeper note
