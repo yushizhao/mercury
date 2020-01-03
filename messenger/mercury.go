@@ -272,10 +272,6 @@ func (m *Messenger) processWrite(name string) ([]byte, error) {
 	}
 
 	newSize := fileInfo.Size()
-	// edge case when save trigger two writes
-	if newSize == 0 {
-		return nil, nil
-	}
 
 	bufferSize := newSize - size
 	// If file is not just appended
